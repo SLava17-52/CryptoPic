@@ -1,9 +1,12 @@
 import os
+import json
+import csv
+import hashlib
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
-import json
-import csv
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 from crypto import (
     encrypt_xor, decrypt_xor,
@@ -22,127 +25,146 @@ def run_experiment():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(IMG_DIR, exist_ok=True)
 
-    # изображение для статистического анализа
-    img_name = "akashi.png"
-    img_path = os.path.join(IMG_DIR, img_name)
+    # Замечание 3 список изображений разного типа для эксперимента
+    image_names = ["akashi.png", "gradient.png"]
 
-    if not os.path.exists(img_path):
-        print(f"Ошибка: файл {img_path} не найден! Поместите изображения в папку imgs/")
-        return
+    for img_name in image_names:
+        img_path = os.path.join(IMG_DIR, img_name)
+        if not os.path.exists(img_path):
+            print(f"⚠️ Файл {img_path} не найден, пропускаем...")
+            continue
 
-    orig_pil = Image.open(img_path).convert("L").resize((256, 256))
-    orig_arr = np.array(orig_pil, dtype=np.uint8)
-    orig_bytes = orig_arr.tobytes()
-    orig_sha = compute_sha256(orig_bytes)
+        print(f"\n==========================================")
+        print(f"📁 Обработка изображения: {img_name}")
+        print(f"==========================================\n")
 
-    print(f"=== Анализ изображения: {img_name} ===")
-    print(f"SHA-256 исходного файла: {orig_sha}")
+        # Загрузка и подготовка (256x256, оттенки серого)
+        orig_pil = Image.open(img_path).convert("L").resize((256, 256))
+        orig_arr = np.array(orig_pil, dtype=np.uint8)
+        orig_bytes = orig_arr.tobytes()
 
-    xor_key = 135792468
-    aes_key = b'0123456789abcdef'  # 16 байт
+        # Замечание 4 проверка SHA-256
+        orig_sha = compute_sha256(orig_bytes)
+        print(f"🔒 SHA-256 исходного файла: {orig_sha}")
 
-    # Потоковый XOR (шифрование и расшифрование)
-    enc_xor = encrypt_xor(orig_bytes, xor_key)
-    dec_xor = decrypt_xor(enc_xor, xor_key)
-    assert dec_xor == orig_bytes, "Ошибка обратимости XOR!"
+        xor_key = 135792468
+        aes_key = b'0123456789abcdef'
 
-    # 2. AES-ECB (шифрование и расшифрование)
-    enc_ecb = encrypt_aes_ecb(orig_bytes, aes_key)
-    dec_ecb = decrypt_aes_ecb(enc_ecb, aes_key, len(orig_bytes))
-    assert dec_ecb == orig_bytes, "Ошибка обратимости AES-ECB!"
+        # 1. Потоковый XOR (шифрование и расшифрование)
+        enc_xor = encrypt_xor(orig_bytes, xor_key)
+        dec_xor = decrypt_xor(enc_xor, xor_key)
+        dec_xor_sha = compute_sha256(dec_xor)
+        assert dec_xor == orig_bytes and dec_xor_sha == orig_sha, "Ошибка обратимости XOR!"
 
-    # 3. AES-CTR (шифрование и расшифрование)
-    enc_ctr, nonce = encrypt_aes_ctr(orig_bytes, aes_key)
-    dec_ctr = decrypt_aes_ctr(enc_ctr, aes_key, nonce)
-    assert dec_ctr == orig_bytes, "Ошибка обратимости AES-CTR!"
+        # 2. AES-ECB (шифрование и расшифрование)
+        enc_ecb = encrypt_aes_ecb(orig_bytes, aes_key)
+        dec_ecb = decrypt_aes_ecb(enc_ecb, aes_key, len(orig_bytes))
+        dec_ecb_sha = compute_sha256(dec_ecb)
+        assert dec_ecb == orig_bytes and dec_ecb_sha == orig_sha, "Ошибка обратимости AES-ECB!"
 
-    print("✓ Обратимость всех методов успешно подтверждена (SHA-256 совпадает).")
+        # 3. AES-CTR (шифрование и расшифрование)
+        enc_ctr, nonce = encrypt_aes_ctr(orig_bytes, aes_key)
+        dec_ctr = decrypt_aes_ctr(enc_ctr, aes_key, nonce)
+        dec_ctr_sha = compute_sha256(dec_ctr)
+        assert dec_ctr == orig_bytes and dec_ctr_sha == orig_sha, "Ошибка обратимости AES-CTR!"
 
-    # Сохранение зашифрованных и расшифрованных картинок
-    h, w = orig_arr.shape
+        print(f"✓ Обратимость подтверждена через SHA-256 (хэш совпал: {dec_ctr_sha[:16]}...)")
 
-    def save_bytes_as_img(b_data, width, height, filename):
-        arr = np.frombuffer(b_data[:width * height], dtype=np.uint8).reshape((height, width))
-        Image.fromarray(arr).save(os.path.join(IMG_DIR, filename))
+        # Корректное сохранение зашифрованных изображений с учетом padding для ECB
+        h, w = orig_arr.shape
+        base_prefix = os.path.splitext(img_name)[0]
 
-    # Сохраняем зашифрованные
-    save_bytes_as_img(enc_xor, w, h, "enc_xor.png")
-    save_bytes_as_img(enc_ecb, w, h, "enc_ecb.png")
-    save_bytes_as_img(enc_ctr, w, h, "enc_ctr.png")
+        def save_encrypted_img(b_data, width, height, filename):
+            target_size = width * height
+            # Если байтов больше (из-за padding в ECB) берем ровно target_size
+            # или дополняем нулями если меньше
+            if len(b_data) >= target_size:
+                arr_bytes = b_data[:target_size]
+            else:
+                arr_bytes = b_data + b'\x00' * (target_size - len(b_data))
 
-    # Сохраняем расшифрованные
-    save_bytes_as_img(dec_xor, w, h, "dec_xor.png")
-    save_bytes_as_img(dec_ecb, w, h, "dec_ecb.png")
-    save_bytes_as_img(dec_ctr, w, h, "dec_ctr.png")
+            arr = np.frombuffer(arr_bytes, dtype=np.uint8).reshape((height, width))
+            Image.fromarray(arr).save(os.path.join(IMG_DIR, f"{base_prefix}_{filename}"))
 
-    print("✓ Зашифрованные и расшифрованные (dec) изображения успешно сохранены в папку imgs/")
+        # Сохраняем зашифрованные
+        save_encrypted_img(enc_xor, w, h, "enc_xor.png")
+        save_encrypted_img(enc_ecb, w, h, "enc_ecb.png")  # Теперь ECB сохраняется корректно
+        save_encrypted_img(enc_ctr, w, h, "enc_ctr.png")
 
-    methods_data = {
-        "Исходное": orig_bytes,
-        "Потоковый XOR": enc_xor,
-        "AES-ECB": enc_ecb,
-        "AES-CTR": enc_ctr
-    }
+        # Расшифрованные сохраняем стандартно по исходной длине
+        def save_decrypted_img(b_data, width, height, filename):
+            arr = np.frombuffer(b_data[:width * height], dtype=np.uint8).reshape((height, width))
+            Image.fromarray(arr).save(os.path.join(IMG_DIR, f"{base_prefix}_{filename}"))
 
-    # Расчет метрик
-    print("\n--- Сводные метрики ---")
-    print(f"{'Метод':<15} | {'Энтропия':<10} | {'Corr H':<10} | {'Corr V':<10}")
-    print("-" * 53)
+        save_decrypted_img(dec_xor, w, h, "dec_xor.png")
+        save_decrypted_img(dec_ecb, w, h, "dec_ecb.png")
+        save_decrypted_img(dec_ctr, w, h, "dec_ctr.png")
 
-    metrics_rows = []
-    for name, data in methods_data.items():
-        entropy = calculate_entropy(data)
-        arr_for_corr = np.frombuffer(data[:w * h], dtype=np.uint8).reshape((h, w))
-        corr_h = calculate_correlation(arr_for_corr, 'horizontal')
-        corr_v = calculate_correlation(arr_for_corr, 'vertical')
+        methods_data = {
+            "Исходное": orig_bytes,
+            "Потоковый XOR": enc_xor,
+            "AES-ECB": enc_ecb,
+            "AES-CTR": enc_ctr
+        }
 
-        metrics_rows.append((name, entropy, corr_h, corr_v))
-        print(f"{name:<15} | {entropy:<10.4f} | {corr_h:<10.4f} | {corr_v:<10.4f}")
+        # Расчет метрик
+        print(f"\n--- Метрики для {img_name} ---")
+        print(f"{'Метод':<15} | {'Энтропия':<10} | {'Corr H':<10} | {'Corr V':<10}")
+        print("-" * 53)
 
-    # Сохранение таблицы в CSV
-    csv_path = os.path.join(RESULTS_DIR, "metrics.csv")
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Метод", "Энтропия", "Corr H", "Corr V"])
-        writer.writerows(metrics_rows)
+        metrics_rows = []
+        for name, data in methods_data.items():
+            entropy = calculate_entropy(data)
+            arr_corr = np.frombuffer(data[:w * h], dtype=np.uint8).reshape((h, w))
+            corr_h = calculate_correlation(arr_corr, 'horizontal')
+            corr_v = calculate_correlation(arr_corr, 'vertical')
+            metrics_rows.append((name, entropy, corr_h, corr_v))
+            print(f"{name:<15} | {entropy:<10.4f} | {corr_h:<10.4f} | {corr_v:<10.4f}")
 
-    # Построение гистограмм
-    plt.figure(figsize=(12, 8))
-    for i, (name, data) in enumerate(methods_data.items(), 1):
-        plt.subplot(2, 2, i)
-        arr = np.frombuffer(data[:w * h], dtype=np.uint8)
-        plt.hist(arr, bins=256, range=(0, 256), color='blue', edgecolor='none', alpha=0.9)
-        plt.title(f"Гистограмма: {name}")
-        plt.xlabel("Значение байта")
-        plt.ylabel("Частота")
-    plt.tight_layout()
+        # Сохранение сводной таблицы для gradient.png в results/
+        if img_name == "akashi.png":
+            with open(os.path.join(RESULTS_DIR, "metrics.csv"), "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Метод", "Энтропия", "Corr H", "Corr V"])
+                writer.writerows(metrics_rows)
 
-    hist_path = os.path.join(RESULTS_DIR, "histograms.png")
-    plt.savefig(hist_path)
-    plt.close()
-    print(f"✓ Гистограммы сохранены в {hist_path}")
+            # Гистограммы
+            plt.figure(figsize=(12, 8))
+            for i, (name, data) in enumerate(methods_data.items(), 1):
+                plt.subplot(2, 2, i)
+                arr = np.frombuffer(data[:w * h], dtype=np.uint8)
+                plt.hist(arr, bins=256, range=(0, 256), color='skyblue', edgecolor='none', alpha=0.9)
+                plt.title(f"Гистограмма: {name}")
+                plt.xlabel("Значение байта")
+                plt.ylabel("Частота")
+            plt.tight_layout()
+            plt.savefig(os.path.join(RESULTS_DIR, "histograms.png"))
+            plt.close()
 
-    # Лавинный эффект (NPCR / UACI)
-    aes_key_changed = aes_key[:-1] + b'X'
-    enc_ctr_2, _ = encrypt_aes_ctr(orig_bytes, aes_key_changed)
-    npcr, uaci = calculate_npcr_uaci(enc_ctr, enc_ctr_2)
+        # Замечание 1 корректный тест лавинного эффекта с фиксированным nonce
+        aes_key_changed = aes_key[:-1] + b'X'
+        cipher1 = AES.new(aes_key, AES.MODE_CTR, nonce=nonce)
+        c1 = cipher1.encrypt(orig_bytes)
 
-    print(f"\nЛавинный эффект (AES-CTR при изменении 1 байта ключа):")
-    print(f"NPCR = {npcr:.2f}%")
-    print(f"UACI = {uaci:.2f}%")
+        cipher2 = AES.new(aes_key_changed, AES.MODE_CTR, nonce=nonce)
+        c2 = cipher2.encrypt(orig_bytes)
 
-    # Сохранение meta.json
-    meta = {
-        "algorithm": "aes-ctr",
-        "source": img_name,
-        "nonce": nonce.hex(),
-        "npcr": npcr,
-        "uaci": uaci
-    }
-    meta_path = os.path.join(RESULTS_DIR, "meta.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=4)
-    print(f"✓ Метаданные сохранены в {meta_path}")
+        npcr, uaci = calculate_npcr_uaci(c1, c2)
+        print(f"\nЛавинный тест (AES-CTR с фиксированным nonce):")
+        print(f"NPCR = {npcr:.2f}%")
+        print(f"UACI = {uaci:.2f}%")
+
+        meta = {
+            "algorithm": "aes-ctr",
+            "source": img_name,
+            "nonce": nonce.hex(),
+            "npcr": npcr,
+            "uaci": uaci
+        }
+        with open(os.path.join(RESULTS_DIR, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=4)
+
+    print("\n🎉 Все эксперименты успешно завершены! Расшифрованные картинки на месте.")
 
 
 if __name__ == "__main__":

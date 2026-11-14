@@ -1,7 +1,7 @@
 {
     "algorithm": "aes-ctr",
-    "source": "akashi.png",
-    "nonce": "79fc1a7e03768d6a",
-    "npcr": 99.64599609375,
-    "uaci": 33.600350174249385
+    "source": "gradient.png",
+    "nonce": "40993b6306910597",
+    "npcr": 99.6063232421875,
+    "uaci": 33.45666623583027
 }

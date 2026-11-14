@@ -164,7 +164,7 @@ def run_experiment():
         with open(os.path.join(RESULTS_DIR, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=4)
 
-    print("\n🎉 Все эксперименты успешно завершены! Расшифрованные картинки на месте.")
+    print("\n🎉 Все эксперименты завершены.")
 
 
 if __name__ == "__main__":

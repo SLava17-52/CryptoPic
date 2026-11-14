@@ -157,15 +157,15 @@ def calculate_npcr_uaci(c1_bytes, c2_bytes):
 
   * `XOR`
     
-    ![akashi_xor](./imgs/enc_xor.png)
+    ![akashi_xor](./imgs/akashi_enc_xor.png)
     
   * `AES-ECB`
     
-    ![akashi_ecb](./imgs/enc_ecb.png)
+    ![akashi_ecb](./imgs/akashi_enc_ecb.png)
     
   * `AES-CTR`
     
-    ![akashi_ctr](./imgs/enc_ctr.png)
+    ![akashi_ctr](./imgs/akashi_enc_ctr.png)
 
 NPCR / UACI (AES-CTR):
 
@@ -186,3 +186,53 @@ NPCR / UACI (AES-CTR):
 # 6. Вывод
 
 Эксперимент наглядно продемонстрировал, что потоковые методы (XOR) и современные режимы блочного шифрования с динамическим изменением гаммы (AES-CTR) эффективно разрушают статистическую и визуальную структуру изображений, превращая их в псевдослучайный шум. Режим AES-ECB не подходит для шифрования изображений из-за сохранения утечек информации на уровне повторяющихся блоков. Проверка обратимости подтвердила корректность реализации дешифрования для всех исследованных алгоритмов.
+
+# UPDATE
+
+## Замечания:
+
+1.  Корректный эксперимент с изменением ключа AES-CTR
+```
+    aes_key_changed = aes_key[:-1] + b'X'
+Используем один и тот же nonce для обоих ключей, чтобы чистый эффект зависел только от ключа
+        
+        cipher1 = AES.new(aes_key, AES.MODE_CTR, nonce=nonce)
+        c1 = cipher1.encrypt(orig_bytes)
+        
+        cipher2 = AES.new(aes_key_changed, AES.MODE_CTR, nonce=nonce)
+        c2 = cipher2.encrypt(orig_bytes)
+
+        npcr, uaci = calculate_npcr_uaci(c1, c2)
+```
+
+3.  Корректное сохранение зашифрованных изображений с учетом padding для ECB
+```
+    h, w = orig_arr.shape
+        base_prefix = os.path.splitext(img_name)[0]
+
+        def save_encrypted_img(b_data, width, height, filename):
+            target_size = width * height
+            # Если байтов больше (из-за padding в ECB) берем ровно target_size
+            # или дополняем нулями если меньше
+            if len(b_data) >= target_size:
+                arr_bytes = b_data[:target_size]
+            else:
+                arr_bytes = b_data + b'\x00' * (target_size - len(b_data))
+
+            arr = np.frombuffer(arr_bytes, dtype=np.uint8).reshape((height, width))
+            Image.fromarray(arr).save(os.path.join(IMG_DIR, f"{base_prefix}_{filename}"))
+```
+3.Добавлены результаты cheakboard.png и gradient.png
+
+   4.Проверка совпадения SHA-256
+   ```
+   orig_sha = compute_sha256(orig_bytes)
+   ```
+
+  ```
+  enc_xor = encrypt_xor(orig_bytes, xor_key)
+        dec_xor = decrypt_xor(enc_xor, xor_key)
+        dec_xor_sha = compute_sha256(dec_xor)
+        assert dec_xor == orig_bytes and dec_xor_sha == orig_sha, "Ошибка обратимости XOR!"
+  ```
+Как проверяется обратимость: После дешифрования данные проверяются дважды выполняется прямое побайтовое сравнение массивов (dec и orig), а также вычисляются и сопоставляются криптографические хэш-суммы SHA-256 исходного и восстановленного файлов (compute_sha256). Полное совпадение хэшей гарантирует целостность данных без потерей бита

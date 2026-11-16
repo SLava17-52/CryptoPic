@@ -35,7 +35,7 @@ def run_experiment():
             continue
 
         print(f"\n==========================================")
-        print(f"📁 Обработка изображения: {img_name}")
+        print(f" Обработка изображения: {img_name}")
         print(f"==========================================\n")
 
         # Загрузка и подготовка (256x256, оттенки серого)
@@ -45,7 +45,7 @@ def run_experiment():
 
         # Замечание 4 проверка SHA-256
         orig_sha = compute_sha256(orig_bytes)
-        print(f"🔒 SHA-256 исходного файла: {orig_sha}")
+        print(f" SHA-256 исходного файла: {orig_sha}")
 
         xor_key = 135792468
         aes_key = b'0123456789abcdef'
@@ -164,7 +164,7 @@ def run_experiment():
         with open(os.path.join(RESULTS_DIR, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=4)
 
-    print("\n🎉 Все эксперименты завершены.")
+    print("\n Все эксперименты завершены.")
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ def run_experiment():
     for img_name in image_names:
         img_path = os.path.join(IMG_DIR, img_name)
         if not os.path.exists(img_path):
-            print(f"⚠️ Файл {img_path} не найден, пропускаем...")
+            print(f"Файл {img_path} не найден, пропускаем...")
             continue
 
         print(f"\n==========================================")
